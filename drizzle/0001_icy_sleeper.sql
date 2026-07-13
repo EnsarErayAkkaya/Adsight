@@ -1,0 +1,1 @@
+ALTER TABLE `campaign` ADD `last_synced_at` text;

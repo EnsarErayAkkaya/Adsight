@@ -2,25 +2,41 @@
   "name": "game-analytic-app",
   "version": "0.1.0",
   "private": true,
+  "main": "out/main/index.js",
+  "description": "Desktop app for daily game ad-campaign analytics (Meta Ads + GA4)",
+  "author": "Ensar Eray Akkaya",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "eslint"
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "package": "electron-vite build && electron-builder",
+    "package:dir": "electron-vite build && electron-builder --dir",
+    "rebuild-native": "electron-builder install-app-deps",
+    "db:generate": "drizzle-kit generate",
+    "db:studio": "drizzle-kit studio"
   },
   "dependencies": {
-    "next": "16.2.10",
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "^0.45.2",
+    "google-auth-library": "^10.9.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
+    "@tailwindcss/vite": "^4.3.2",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.10",
+    "@vitejs/plugin-react": "^5.2.0",
+    "drizzle-kit": "^0.31.10",
+    "electron": "^42.6.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vite": "^7.3.6"
   }
 }
