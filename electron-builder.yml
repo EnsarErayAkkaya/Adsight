@@ -1,5 +1,5 @@
-appId: com.erayakkaya.gameanalytics
-productName: Game Analytics
+appId: com.erayakkaya.adsight
+productName: Adsight
 directories:
   output: release
 files:
@@ -14,6 +14,8 @@ extraResources:
     to: drizzle
 win:
   target: nsis
+  # electron-builder converts the PNG to the multi-size .ico automatically.
+  icon: public/adsight.png
 nsis:
   oneClick: true
   deleteAppDataOnUninstall: false

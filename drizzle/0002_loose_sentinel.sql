@@ -1,0 +1,1 @@
+ALTER TABLE `ga4_cohort` ADD `revenue` real;

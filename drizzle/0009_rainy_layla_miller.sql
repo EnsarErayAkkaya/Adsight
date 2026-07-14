@@ -1,0 +1,1 @@
+ALTER TABLE `ga4_installs` DROP COLUMN `sessions`;

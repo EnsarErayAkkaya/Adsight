@@ -41,6 +41,11 @@ export const campaign = sqliteTable("campaign", {
   metaCampaignId: text("meta_campaign_id").notNull(),
   startDate: text("start_date").notNull(),
   endDate: text("end_date").notNull(),
+  /**
+   * JSON array of ISO 3166-1 alpha-2 codes the campaign targets (e.g.
+   * ["US","CA"]). GA4 data is filtered to these; null/empty = all countries.
+   */
+  countries: text("countries"),
   /** ISO datetime of the last fully-successful sync; null = never synced. */
   lastSyncedAt: text("last_synced_at"),
 });
@@ -59,6 +64,8 @@ export const metaDaily = sqliteTable(
     spend: real("spend"),
     impressions: integer("impressions"),
     clicks: integer("clicks"),
+    /** Meta-attributed installs (`mobile_app_install` action) — feeds CPI. */
+    installs: integer("installs"),
   },
   (t) => [primaryKey({ columns: [t.campaignId, t.date] })],
 );
@@ -72,6 +79,8 @@ export const ga4Installs = sqliteTable(
       .references(() => campaign.id, { onDelete: "cascade" }),
     installDate: text("install_date").notNull(),
     installs: integer("installs"),
+    /** GA4 sessions per user that day (all users, same platform/country scope). */
+    sessionsPerUser: real("sessions_per_user"),
   },
   (t) => [primaryKey({ columns: [t.campaignId, t.installDate] })],
 );
@@ -88,9 +97,20 @@ export const ga4Cohort = sqliteTable(
     activeUsers: integer("active_users"),
     totalUsers: integer("total_users"),
     avgPlaytimeSec: real("avg_playtime_sec"),
+    /** Purchase revenue from this cohort on D+n. Null = not fetched yet. */
+    revenue: real("revenue"),
   },
   (t) => [primaryKey({ columns: [t.campaignId, t.installDate, t.nthDay] })],
 );
+
+/**
+ * App settings (credentials etc.) as key/value. Secret values are encrypted
+ * with Electron safeStorage and prefixed "enc:"; plaintext uses "plain:".
+ */
+export const setting = sqliteTable("setting", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+});
 
 export const gameRelations = relations(game, ({ many }) => ({
   platforms: many(platform),

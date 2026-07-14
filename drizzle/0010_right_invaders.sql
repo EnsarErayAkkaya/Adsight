@@ -1,0 +1,1 @@
+ALTER TABLE `ga4_installs` ADD `sessions_per_user` real;

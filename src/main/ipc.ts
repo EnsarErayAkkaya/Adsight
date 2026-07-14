@@ -2,10 +2,44 @@ import { ipcMain } from "electron";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import type { Game, GameDetail } from "@shared/types";
+import type { CampaignListItem, Game, GameDetail } from "@shared/types";
 import { db } from "./db";
-import { campaign, game, platform, PLATFORMS } from "./schema";
+import {
+  campaign,
+  ga4Cohort,
+  ga4Installs,
+  game,
+  metaDaily,
+  platform,
+  PLATFORMS,
+} from "./schema";
 import { getCampaignTable } from "./table";
+import { getLevelFunnel } from "./levelFunnel";
+import { parseCountries } from "./sync";
+import { fetchMetaCampaigns } from "./meta";
+import { resetGa4Client } from "./ga4";
+import {
+  getSettingsInfo,
+  getTargetBands,
+  setTargetBands,
+  updateSettings,
+} from "./settings";
+
+const settingsSchema = z.object({
+  metaAccessToken: z.string().optional(),
+  metaAdAccountId: z.string().optional(),
+  ga4ServiceAccountJson: z.string().optional(),
+  revenueMetric: z.string().optional(),
+});
+
+const bandsSchema = z.record(
+  z.string(),
+  z.object({
+    low: z.number().nullable(),
+    mid: z.number().nullable(),
+    high: z.number().nullable(),
+  }),
+);
 
 const gameSchema = z.object({
   name: z.string().trim().min(1, "Name is required"),
@@ -19,17 +53,70 @@ const platformSchema = z.object({
 
 const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD");
 
+const campaignFields = {
+  name: z.string().trim().min(1, "Name is required"),
+  metaCampaignId: z.string().trim().min(1, "Meta campaign ID is required"),
+  startDate: isoDate,
+  endDate: isoDate,
+  countries: z.array(
+    z
+      .string()
+      .trim()
+      .toUpperCase()
+      .regex(/^[A-Z]{2}$/, "Use 2-letter ISO codes like US, DE"),
+  ),
+};
+
+const dateOrder = (c: { startDate: string; endDate: string }) =>
+  c.startDate <= c.endDate;
+const dateOrderMsg = { message: "End date must be on or after start date" };
+
 const campaignSchema = z
-  .object({
-    platformId: z.string().min(1),
-    name: z.string().trim().min(1, "Name is required"),
-    metaCampaignId: z.string().trim().min(1, "Meta campaign ID is required"),
-    startDate: isoDate,
-    endDate: isoDate,
-  })
-  .refine((c) => c.startDate <= c.endDate, {
-    message: "End date must be on or after start date",
+  .object({ platformId: z.string().min(1), ...campaignFields })
+  .refine(dateOrder, dateOrderMsg);
+
+const campaignUpdateSchema = z
+  .object({ id: z.string().min(1), ...campaignFields })
+  .refine(dateOrder, dateOrderMsg);
+
+export async function updateCampaign(parsed: {
+  id: string;
+  name: string;
+  metaCampaignId: string;
+  startDate: string;
+  endDate: string;
+  countries: string[];
+}): Promise<void> {
+  const existing = await db.query.campaign.findFirst({
+    where: (campaign, { eq }) => eq(campaign.id, parsed.id),
   });
+  if (!existing) throw new Error(`Campaign not found: ${parsed.id}`);
+
+  const countriesJson = JSON.stringify(parsed.countries);
+  await db
+    .update(campaign)
+    .set({
+      name: parsed.name,
+      metaCampaignId: parsed.metaCampaignId,
+      startDate: parsed.startDate,
+      endDate: parsed.endDate,
+      countries: countriesJson,
+    })
+    .where(eq(campaign.id, parsed.id));
+
+  // Stored spend belongs to the old Meta campaign — wipe so it re-fetches.
+  if (existing.metaCampaignId !== parsed.metaCampaignId) {
+    await db.delete(metaDaily).where(eq(metaDaily.campaignId, parsed.id));
+  }
+
+  // Stored GA4 data was fetched with the old country scope — wipe so the
+  // next sync re-fetches installs and cohorts for the new countries.
+  const oldCountries = JSON.stringify(parseCountries(existing.countries));
+  if (oldCountries !== countriesJson) {
+    await db.delete(ga4Installs).where(eq(ga4Installs.campaignId, parsed.id));
+    await db.delete(ga4Cohort).where(eq(ga4Cohort.campaignId, parsed.id));
+  }
+}
 
 export function registerIpcHandlers(): void {
   ipcMain.handle("games:list", async (): Promise<Game[]> => {
@@ -72,9 +159,9 @@ export function registerIpcHandlers(): void {
           .map((p) => ({
             id: p.id,
             platform: p.platform,
-            campaigns: [...p.campaigns].sort((a, b) =>
-              b.startDate.localeCompare(a.startDate),
-            ),
+            campaigns: [...p.campaigns]
+              .sort((a, b) => b.startDate.localeCompare(a.startDate))
+              .map((c) => ({ ...c, countries: parseCountries(c.countries) })),
           })),
       };
     },
@@ -99,9 +186,18 @@ export function registerIpcHandlers(): void {
     await db.delete(platform).where(eq(platform.id, z.string().parse(id)));
   });
 
+
   ipcMain.handle("campaigns:create", async (_e, input: unknown) => {
     const parsed = campaignSchema.parse(input);
-    await db.insert(campaign).values({ id: randomUUID(), ...parsed });
+    await db.insert(campaign).values({
+      id: randomUUID(),
+      ...parsed,
+      countries: JSON.stringify(parsed.countries),
+    });
+  });
+
+  ipcMain.handle("campaigns:update", async (_e, input: unknown) => {
+    await updateCampaign(campaignUpdateSchema.parse(input));
   });
 
   ipcMain.handle("campaigns:delete", async (_e, id: unknown) => {
@@ -110,5 +206,64 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle("campaigns:table", async (_e, campaignId: unknown) => {
     return getCampaignTable(z.string().parse(campaignId));
+  });
+
+  ipcMain.handle("campaigns:listAll", async (): Promise<CampaignListItem[]> => {
+    const rows = await db.query.campaign.findMany({
+      with: { platform: { with: { game: true } } },
+    });
+    return rows
+      .map((c) => ({
+        id: c.id,
+        name: c.name,
+        gameName: c.platform.game.name,
+        platform: c.platform.platform,
+        startDate: c.startDate,
+        endDate: c.endDate,
+      }))
+      .sort(
+        (a, b) =>
+          a.gameName.localeCompare(b.gameName) ||
+          b.startDate.localeCompare(a.startDate),
+      );
+  });
+
+  ipcMain.handle("targets:get", async () => {
+    return {
+      ios: await getTargetBands("ios"),
+      android: await getTargetBands("android"),
+    };
+  });
+
+  ipcMain.handle(
+    "targets:set",
+    async (_e, platformKind: unknown, bands: unknown) => {
+      const kind = z.enum(PLATFORMS).parse(platformKind);
+      await setTargetBands(kind, bandsSchema.parse(bands));
+    },
+  );
+
+  ipcMain.handle("analytics:levelFunnel", async (_e, input: unknown) => {
+    const parsed = z
+      .union([
+        z.object({ campaignId: z.string().min(1) }),
+        z.object({ gameId: z.string().min(1) }),
+      ])
+      .parse(input);
+    return getLevelFunnel(parsed);
+  });
+
+  ipcMain.handle("meta:campaigns", async () => {
+    return fetchMetaCampaigns();
+  });
+
+  ipcMain.handle("settings:get", async () => {
+    return getSettingsInfo();
+  });
+
+  ipcMain.handle("settings:update", async (_e, input: unknown) => {
+    const parsed = settingsSchema.parse(input);
+    await updateSettings(parsed);
+    resetGa4Client(); // new credentials take effect immediately
   });
 }

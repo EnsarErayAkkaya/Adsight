@@ -15,6 +15,69 @@
       "when": 1783963973050,
       "tag": "0001_icy_sleeper",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1783969748596,
+      "tag": "0002_loose_sentinel",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1784004547756,
+      "tag": "0003_parallel_iron_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1784005324952,
+      "tag": "0004_lucky_electro",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1784006692399,
+      "tag": "0005_magical_king_cobra",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1784007840535,
+      "tag": "0006_clean_blink",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1784009399155,
+      "tag": "0007_puzzling_paladin",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1784035902950,
+      "tag": "0008_remarkable_scarlet_witch",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1784036365144,
+      "tag": "0009_rainy_layla_miller",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1784036390263,
+      "tag": "0010_right_invaders",
+      "breakpoints": true
     }
   ]
 }

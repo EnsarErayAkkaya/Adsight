@@ -1,11 +1,17 @@
+import { net } from "electron";
+import type { MetaCampaignOption } from "@shared/types";
 import { META_API_VERSION } from "./config";
+import { describeFetchError } from "./ga4";
 import type { ISODate } from "./dates";
+import { getMetaCredentials } from "./settings";
 
 export interface MetaDailyRow {
   date: ISODate;
   spend: number;
   impressions: number;
   clicks: number;
+  /** Meta-attributed installs (`mobile_app_install` action). */
+  installs: number;
 }
 
 interface InsightsApiRow {
@@ -13,28 +19,44 @@ interface InsightsApiRow {
   spend?: string;
   impressions?: string;
   clicks?: string;
+  actions?: { action_type: string; value: string }[];
 }
 
-interface InsightsApiResponse {
-  data?: InsightsApiRow[];
+interface GraphApiResponse<Row> {
+  data?: Row[];
   paging?: { next?: string };
   error?: { message: string; code: number };
 }
 
+type InsightsApiResponse = GraphApiResponse<InsightsApiRow>;
+
 const RETRYABLE_CODES = new Set([4, 17, 32, 613, 80000, 80004]); // Meta rate-limit family
 
-async function fetchWithBackoff(url: string): Promise<InsightsApiResponse> {
+async function fetchWithBackoff<Row>(url: string): Promise<GraphApiResponse<Row>> {
   let delayMs = 2_000;
   for (let attempt = 0; ; attempt++) {
-    const res = await fetch(url);
-    const body = (await res.json()) as InsightsApiResponse;
+    let res: Response;
+    try {
+      // Chromium network stack — see the note in ga4.ts runReport.
+      res = await net.fetch(url);
+    } catch (err) {
+      if (attempt >= 3) {
+        throw new Error(
+          `Meta API request could not be sent: ${describeFetchError(err)}`,
+        );
+      }
+      await new Promise((r) => setTimeout(r, delayMs));
+      delayMs *= 2;
+      continue;
+    }
+    const body = (await res.json()) as GraphApiResponse<Row>;
     if (!body.error && res.ok) return body;
 
     const code = body.error?.code ?? res.status;
     const retryable = res.status === 429 || RETRYABLE_CODES.has(code);
     if (!retryable || attempt >= 3) {
       throw new Error(
-        `Meta Insights request failed (code ${code}): ${body.error?.message ?? res.statusText}`,
+        `Meta API request failed (code ${code}): ${body.error?.message ?? res.statusText}`,
       );
     }
     await new Promise((r) => setTimeout(r, delayMs));
@@ -55,17 +77,16 @@ export async function fetchMetaDailyInsights(
     return fakeInsights(metaCampaignId, since, until);
   }
 
-  const token = process.env.META_ACCESS_TOKEN;
-  const account = process.env.META_AD_ACCOUNT_ID;
+  const { token, account } = await getMetaCredentials();
   if (!token || !account) {
     throw new Error(
-      "META_ACCESS_TOKEN / META_AD_ACCOUNT_ID not configured (set META_FAKE=1 for fake dev data)",
+      "Meta credentials not configured — add them in Settings (or set META_FAKE=1 for fake dev data)",
     );
   }
 
   const params = new URLSearchParams({
     level: "campaign",
-    fields: "spend,impressions,clicks",
+    fields: "spend,impressions,clicks,actions",
     filtering: JSON.stringify([
       { field: "campaign.id", operator: "IN", value: [metaCampaignId] },
     ]),
@@ -80,18 +101,62 @@ export async function fetchMetaDailyInsights(
 
   const rows: MetaDailyRow[] = [];
   while (url) {
-    const body = await fetchWithBackoff(url);
+    const body: InsightsApiResponse = await fetchWithBackoff(url);
     for (const r of body.data ?? []) {
       rows.push({
         date: r.date_start,
         spend: Number(r.spend ?? 0),
         impressions: Number(r.impressions ?? 0),
         clicks: Number(r.clicks ?? 0),
+        installs: Number(
+          r.actions?.find((a) => a.action_type === "mobile_app_install")
+            ?.value ?? 0,
+        ),
       });
     }
     url = body.paging?.next;
   }
   return rows;
+}
+
+interface CampaignApiRow {
+  id: string;
+  name?: string;
+  status?: string;
+}
+
+/** The ad account's campaigns, newest first — feeds the ID picker in the UI. */
+export async function fetchMetaCampaigns(): Promise<MetaCampaignOption[]> {
+  if (process.env.META_FAKE === "1") {
+    return [
+      { id: "120210000000000001", name: "Fake UA Campaign (iOS)", status: "ACTIVE" },
+      { id: "120210000000000002", name: "Fake UA Campaign (Android)", status: "ACTIVE" },
+      { id: "120210000000000003", name: "Fake Retargeting Test", status: "PAUSED" },
+    ];
+  }
+
+  const { token, account } = await getMetaCredentials();
+  if (!token || !account) {
+    throw new Error("Meta credentials not configured — add them in Settings");
+  }
+
+  const params = new URLSearchParams({
+    fields: "id,name,status",
+    limit: "200",
+    access_token: token,
+  });
+  let url: string | undefined =
+    `https://graph.facebook.com/${META_API_VERSION}/act_${account}/campaigns?${params}`;
+
+  const options: MetaCampaignOption[] = [];
+  while (url) {
+    const body: GraphApiResponse<CampaignApiRow> = await fetchWithBackoff(url);
+    for (const c of body.data ?? []) {
+      options.push({ id: c.id, name: c.name ?? c.id, status: c.status ?? "" });
+    }
+    url = body.paging?.next;
+  }
+  return options;
 }
 
 // --- Fake mode (META_FAKE=1): deterministic per campaign+date, so numbers
@@ -122,11 +187,13 @@ function fakeInsights(
     const date = new Date(t).toISOString().slice(0, 10);
     const rand = seededRandom(`${metaCampaignId}:${date}`);
     const impressions = Math.round(10_000 + rand() * 20_000);
+    const clicks = Math.round(impressions * (0.01 + rand() * 0.02));
     rows.push({
       date,
       spend: Math.round((50 + rand() * 100) * 100) / 100,
       impressions,
-      clicks: Math.round(impressions * (0.01 + rand() * 0.02)),
+      clicks,
+      installs: Math.round(clicks * (0.15 + rand() * 0.15)),
     });
   }
   return rows;

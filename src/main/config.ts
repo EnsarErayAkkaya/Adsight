@@ -7,7 +7,7 @@
  * passed since the end of D (i.e. now >= midnight(D+1) + COMPLETED_HOURS).
  * This buffer lets Meta spend finalize and GA4 finish processing.
  */
-export const COMPLETED_HOURS = 36;
+export const COMPLETED_HOURS = 12;
 
 /** Meta Marketing API version (v23.0 expired June 2026 — keep pinned & current). */
 export const META_API_VERSION = "v25.0";

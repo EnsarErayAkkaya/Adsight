@@ -1,1 +1,46 @@
 @import "tailwindcss";
+
+/*
+ * Chrome tokens (design decisions §5.1): neutral, light-default, dark
+ * supported. Every color resolves in both themes; band coloring in
+ * format.ts is the only saturated color in the app.
+ */
+:root {
+  --surface-0: #f7f6f2; /* app background */
+  --surface-1: #f1efe8; /* recessed rows / grouped fields */
+  --surface-2: #ffffff; /* raised: top bar, cards, table */
+  --ink: #1f1e1b; /* text-primary */
+  --ink-secondary: #6d6c65;
+  --ink-muted: #a4a39a;
+  --edge: #e4e2d9; /* hairline borders */
+  --accent: #2563eb;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --surface-0: #171613;
+    --surface-1: #1e1d1a;
+    --surface-2: #242320;
+    --ink: #eceae4;
+    --ink-secondary: #a6a49b;
+    --ink-muted: #706f66;
+    --edge: #35342f;
+    --accent: #7aa5f5;
+  }
+}
+
+@theme inline {
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-ink-secondary: var(--ink-secondary);
+  --color-ink-muted: var(--ink-muted);
+  --color-edge: var(--edge);
+  --color-accent: var(--accent);
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--ink);
+}

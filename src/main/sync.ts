@@ -31,10 +31,25 @@ async function getCampaign(campaignId: string) {
   return c;
 }
 
-/** GA4 scope for a campaign: the game's property + the platform dimension. */
+/**
+ * GA4 scope for a campaign: the game's property + the platform dimension +
+ * the campaign's target countries (empty = worldwide).
+ */
 interface Ga4Scope {
   propertyId: string;
   platform: PlatformKind;
+  countries: string[];
+}
+
+/** Parse the campaign.countries JSON column; null/invalid = worldwide. */
+export function parseCountries(json: string | null): string[] {
+  if (!json) return [];
+  try {
+    const arr = JSON.parse(json);
+    return Array.isArray(arr) ? arr.filter((c) => typeof c === "string") : [];
+  } catch {
+    return [];
+  }
 }
 
 /**
@@ -43,13 +58,17 @@ interface Ga4Scope {
  * Meta occasionally restates recent spend. Older stored days are final.
  */
 async function syncMeta(c: Campaign, completed: string[]): Promise<void> {
+  // Rows written before the installs column existed have installs=null;
+  // treating them as absent makes them re-fetch (and backfill) once.
   const existing = new Set(
     (
       await db
-        .select({ date: metaDaily.date })
+        .select({ date: metaDaily.date, installs: metaDaily.installs })
         .from(metaDaily)
         .where(eq(metaDaily.campaignId, c.id))
-    ).map((r) => r.date),
+    )
+      .filter((r) => r.installs !== null)
+      .map((r) => r.date),
   );
   const missing = completed.filter((d) => !existing.has(d));
   const restatement = completed.slice(-META_RESTATEMENT_DAYS);
@@ -73,10 +92,16 @@ async function syncMeta(c: Campaign, completed: string[]): Promise<void> {
         spend: r.spend,
         impressions: r.impressions,
         clicks: r.clicks,
+        installs: r.installs,
       })
       .onConflictDoUpdate({
         target: [metaDaily.campaignId, metaDaily.date],
-        set: { spend: r.spend, impressions: r.impressions, clicks: r.clicks },
+        set: {
+          spend: r.spend,
+          impressions: r.impressions,
+          clicks: r.clicks,
+          installs: r.installs,
+        },
       });
   }
 }
@@ -87,13 +112,20 @@ async function syncGa4Installs(
   scope: Ga4Scope,
   completed: string[],
 ): Promise<void> {
+  // Rows written before the sessions-per-user column existed have null there;
+  // treating them as absent makes them re-fetch (and backfill) once.
   const existing = new Set(
     (
       await db
-        .select({ installDate: ga4Installs.installDate })
+        .select({
+          installDate: ga4Installs.installDate,
+          sessionsPerUser: ga4Installs.sessionsPerUser,
+        })
         .from(ga4Installs)
         .where(eq(ga4Installs.campaignId, c.id))
-    ).map((r) => r.installDate),
+    )
+      .filter((r) => r.sessionsPerUser !== null)
+      .map((r) => r.installDate),
   );
   const missing = completed.filter((d) => !existing.has(d));
   if (missing.length === 0) return;
@@ -101,6 +133,7 @@ async function syncGa4Installs(
   const rows = await fetchGa4DailyInstalls(
     scope.propertyId,
     scope.platform,
+    scope.countries,
     missing[0],
     missing[missing.length - 1],
   );
@@ -114,10 +147,11 @@ async function syncGa4Installs(
         campaignId: c.id,
         installDate: r.installDate,
         installs: r.installs,
+        sessionsPerUser: r.sessionsPerUser,
       })
       .onConflictDoUpdate({
         target: [ga4Installs.campaignId, ga4Installs.installDate],
-        set: { installs: r.installs },
+        set: { installs: r.installs, sessionsPerUser: r.sessionsPerUser },
       });
   }
 }
@@ -134,11 +168,18 @@ async function syncGa4Cohorts(
   completed: string[],
 ): Promise<void> {
   const storedCells = await db
-    .select({ installDate: ga4Cohort.installDate, nthDay: ga4Cohort.nthDay })
+    .select({
+      installDate: ga4Cohort.installDate,
+      nthDay: ga4Cohort.nthDay,
+      revenue: ga4Cohort.revenue,
+    })
     .from(ga4Cohort)
     .where(eq(ga4Cohort.campaignId, c.id));
   const storedByDay = new Map<string, Set<number>>();
   for (const cell of storedCells) {
+    // Rows written before the revenue column existed have revenue=null;
+    // treating them as absent makes them re-fetch (and backfill) once.
+    if (cell.revenue === null) continue;
     if (!storedByDay.has(cell.installDate)) {
       storedByDay.set(cell.installDate, new Set());
     }
@@ -154,7 +195,12 @@ async function syncGa4Cohorts(
   });
   if (stale.length === 0) return;
 
-  const cells = await fetchGa4Cohorts(scope.propertyId, scope.platform, stale);
+  const cells = await fetchGa4Cohorts(
+    scope.propertyId,
+    scope.platform,
+    scope.countries,
+    stale,
+  );
   const staleSet = new Set(stale);
 
   for (const cell of cells) {
@@ -169,6 +215,7 @@ async function syncGa4Cohorts(
         activeUsers: cell.activeUsers,
         totalUsers: cell.totalUsers,
         avgPlaytimeSec: cell.avgPlaytimeSec,
+        revenue: cell.revenue,
       })
       .onConflictDoUpdate({
         target: [ga4Cohort.campaignId, ga4Cohort.installDate, ga4Cohort.nthDay],
@@ -176,6 +223,7 @@ async function syncGa4Cohorts(
           activeUsers: cell.activeUsers,
           totalUsers: cell.totalUsers,
           avgPlaytimeSec: cell.avgPlaytimeSec,
+          revenue: cell.revenue,
         },
       });
   }
@@ -201,6 +249,7 @@ export async function syncCampaign(campaignId: string): Promise<SyncResult> {
   const scope: Ga4Scope = {
     propertyId: c.platform.game.ga4PropertyId,
     platform: c.platform.platform,
+    countries: parseCountries(c.countries),
   };
 
   const errors: SyncErrors = {
