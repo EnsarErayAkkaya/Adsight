@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Line, LineChart } from "recharts";
-import type { CampaignTable, ColumnDef, SyncErrors } from "@shared/types";
+import type {
+  AdSummary,
+  CampaignTable,
+  ColumnDef,
+  ColumnFormat,
+  SyncErrors,
+  TargetBands,
+} from "@shared/types";
 import { PLATFORM_LABELS } from "@shared/types";
 import { bandClass, bandTitle, formatCell } from "../format";
 import type { Route } from "../App";
@@ -9,6 +16,7 @@ import TopBar from "../components/TopBar";
 /** Which table columns each source feeds — shown so a failure says what to distrust. */
 const SOURCE_LABELS: Record<keyof SyncErrors, { name: string; affects: string }> = {
   meta: { name: "Meta Ads", affects: "Spend, CPI, Impressions, Clicks, CTR, eCPI, ROAS" },
+  metaAds: { name: "Meta ad creatives", affects: "the Ads section below the table" },
   ga4Installs: { name: "GA4 installs", affects: "Installs, Sess/User, IPM, eCPI" },
   ga4Cohorts: {
     name: "GA4 cohorts",
@@ -77,6 +85,149 @@ function HeaderSparkline({
 
 function groupBorder(col: ColumnDef): string {
   return GROUP_STARTS.has(col.label) ? "border-l border-edge" : "";
+}
+
+/** Stats shown under each ad creative; band-colored where bands exist. */
+const AD_STATS: { label: string; format: ColumnFormat; key: keyof AdSummary }[] = [
+  { label: "Spend", format: "money", key: "spend" },
+  { label: "Installs", format: "int", key: "installs" },
+  { label: "CPI", format: "money", key: "cpi" },
+  { label: "CTR", format: "pct", key: "ctr" },
+  { label: "IPM", format: "float1", key: "ipm" },
+];
+
+function AdMedia({ ad }: { ad: AdSummary }) {
+  const [broken, setBroken] = useState(false);
+  const imageSrc = ad.imageUrl ?? ad.thumbnailUrl;
+
+  if (ad.videoUrl && !broken) {
+    return (
+      <video
+        controls
+        preload="metadata"
+        src={ad.videoUrl}
+        poster={ad.thumbnailUrl ?? undefined}
+        onError={() => setBroken(true)}
+        className="h-full w-full object-cover"
+      />
+    );
+  }
+  if (imageSrc && !broken) {
+    return (
+      <div className="relative h-full w-full">
+        <img
+          src={imageSrc}
+          alt={ad.name}
+          loading="lazy"
+          onError={() => setBroken(true)}
+          className="h-full w-full object-cover"
+        />
+        {ad.creativeType === "video" && (
+          <span className="absolute bottom-1.5 right-1.5 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white">
+            video
+          </span>
+        )}
+      </div>
+    );
+  }
+  return (
+    <div className="flex h-full w-full items-center justify-center p-3 text-center text-xs text-ink-muted">
+      {broken
+        ? "preview link expired — Refresh to re-fetch"
+        : "no preview available"}
+    </div>
+  );
+}
+
+function AdCard({ ad, bands }: { ad: AdSummary; bands: TargetBands }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-edge bg-surface-2">
+      <div className="aspect-square w-full bg-surface-1">
+        <AdMedia ad={ad} />
+      </div>
+      <div className="space-y-1.5 p-3">
+        <p className="truncate text-sm font-medium" title={ad.name}>
+          {ad.name}
+        </p>
+        <dl className="space-y-0.5">
+          {AD_STATS.map(({ label, format, key }) => {
+            const v = ad[key] as number | null;
+            return (
+              <div
+                key={label}
+                className="flex items-baseline justify-between gap-2 text-[13px]"
+              >
+                <dt className="text-xs text-ink-secondary">{label}</dt>
+                <dd
+                  title={bandTitle(label, v, bands, format)}
+                  className={`rounded px-1 text-right tabular-nums ${
+                    v === null ? "text-ink-muted" : bandClass(label, v, bands)
+                  }`}
+                >
+                  {formatCell(v, format)}
+                </dd>
+              </div>
+            );
+          })}
+        </dl>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * All ads of the campaign with lifetime stats, spend-descending. Reads what
+ * the last sync stored; re-fetches whenever the table reloads (`table`
+ * identity changes) so Refresh updates both together.
+ */
+function AdsSection({
+  campaignId,
+  table,
+}: {
+  campaignId: string;
+  table: CampaignTable;
+}) {
+  const [ads, setAds] = useState<AdSummary[] | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.api.ads
+      .forCampaign(campaignId)
+      .then((a) => {
+        setAds(a);
+        setError(null);
+      })
+      .catch((e) => setError(String(e)));
+  }, [campaignId, table]);
+
+  return (
+    <section className="space-y-3">
+      <div>
+        <h2 className="text-base font-medium">Ads</h2>
+        <p className="text-xs text-ink-secondary">
+          Lifetime totals per ad over the campaign window, highest spend
+          first. CPI / CTR / IPM tint against the{" "}
+          {PLATFORM_LABELS[table.platform]} target bands.
+        </p>
+      </div>
+      {error ? (
+        <p className="text-sm text-red-700 dark:text-red-300">{error}</p>
+      ) : ads === undefined ? (
+        <p className="text-sm text-ink-secondary">Loading ads…</p>
+      ) : ads.length === 0 ? (
+        <div className="rounded-xl border border-edge bg-surface-2 p-6 text-center text-sm text-ink-secondary">
+          No ads stored yet — they arrive with the next successful sync
+          (Refresh).
+        </div>
+      ) : (
+        <div className="grid gap-4 [grid-template-columns:repeat(auto-fill,minmax(200px,1fr))]">
+          {ads.map((ad) => (
+            <AdCard key={ad.adId} ad={ad} bands={table.bands} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
 }
 
 function SkeletonTable() {
@@ -322,6 +473,8 @@ export default function CampaignView({
             </table>
           </div>
         )}
+
+        <AdsSection campaignId={campaignId} table={table} />
 
         <p className="text-xs text-ink-muted">
           “—” = not yet available (day inside the completion window, or a

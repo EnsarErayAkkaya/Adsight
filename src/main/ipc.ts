@@ -2,13 +2,14 @@ import { ipcMain } from "electron";
 import { randomUUID } from "crypto";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
-import type { CampaignListItem, Game, GameDetail } from "@shared/types";
+import type { AdSummary, CampaignListItem, Game, GameDetail } from "@shared/types";
 import { db } from "./db";
 import {
   campaign,
   ga4Cohort,
   ga4Installs,
   game,
+  metaAd,
   metaDaily,
   platform,
   PLATFORMS,
@@ -227,6 +228,41 @@ export function registerIpcHandlers(): void {
           b.startDate.localeCompare(a.startDate),
       );
   });
+
+  ipcMain.handle(
+    "ads:forCampaign",
+    async (_e, campaignId: unknown): Promise<AdSummary[]> => {
+      const rows = await db
+        .select()
+        .from(metaAd)
+        .where(eq(metaAd.campaignId, z.string().parse(campaignId)));
+      return rows
+        .map((r): AdSummary => {
+          const ratio = (num: number | null, den: number | null) =>
+            num !== null && den !== null && den > 0 ? num / den : null;
+          return {
+            adId: r.adId,
+            name: r.name,
+            spend: r.spend,
+            impressions: r.impressions,
+            clicks: r.clicks,
+            installs: r.installs,
+            cpi: ratio(r.spend, r.installs),
+            ctr: ratio(r.clicks, r.impressions),
+            ipm:
+              ratio(r.installs, r.impressions) !== null
+                ? ratio(r.installs, r.impressions)! * 1000
+                : null,
+            creativeType: r.creativeType,
+            thumbnailUrl: r.thumbnailUrl,
+            imageUrl: r.imageUrl,
+            videoUrl: r.videoUrl,
+            fetchedAt: r.fetchedAt,
+          };
+        })
+        .sort((a, b) => (b.spend ?? 0) - (a.spend ?? 0));
+    },
+  );
 
   ipcMain.handle("targets:get", async () => {
     return {

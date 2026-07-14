@@ -61,12 +61,12 @@ function BandPreview({
   ];
   const zones = lowerIsBetter ? [...ramp].reverse() : ramp;
   return (
-    <div className="flex items-center gap-1">
+    <div className="flex min-w-0 items-center gap-1">
       {zones.map((cls, i) => (
-        <span key={i} className="flex items-center gap-1">
-          <span className={`h-2.5 w-7 rounded-sm ${cls}`} />
+        <span key={i} className="flex min-w-0 flex-1 items-center gap-1">
+          <span className={`h-2.5 min-w-3 flex-1 rounded-sm ${cls}`} />
           {i < 3 && (
-            <span className="text-[10px] tabular-nums text-ink-muted">
+            <span className="shrink-0 text-[10px] tabular-nums text-ink-muted">
               {nums[i]}
             </span>
           )}
@@ -165,7 +165,7 @@ function BandsEditor({
                   />
                 </td>
               ))}
-              <td className="py-1">
+              <td className="w-full max-w-0 py-1">
                 <BandPreview
                   draft={draft[col.label]}
                   lowerIsBetter={col.lowerIsBetter}

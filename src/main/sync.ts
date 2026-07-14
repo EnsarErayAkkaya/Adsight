@@ -1,15 +1,16 @@
 import { eq } from "drizzle-orm";
 import { db } from "./db";
-import { campaign, ga4Cohort, ga4Installs, metaDaily } from "./schema";
+import { campaign, ga4Cohort, ga4Installs, metaAd, metaDaily } from "./schema";
 import type { Campaign, PlatformKind } from "./schema";
 import { COHORT_MAX_NTH_DAY, META_RESTATEMENT_DAYS } from "./config";
 import { completedDates, isCohortCellMature } from "./dates";
 import { fetchGa4Cohorts, fetchGa4DailyInstalls } from "./ga4";
-import { fetchMetaDailyInsights } from "./meta";
+import { fetchMetaAds, fetchMetaDailyInsights } from "./meta";
 
 /** Per-source error messages; null = that source synced fine. */
 export interface SyncErrors {
   meta: string | null;
+  metaAds: string | null;
   ga4Installs: string | null;
   ga4Cohorts: string | null;
 }
@@ -104,6 +105,40 @@ async function syncMeta(c: Campaign, completed: string[]): Promise<void> {
         },
       });
   }
+}
+
+/**
+ * Per-ad totals + creatives: refreshed on every sync. Stats are lifetime
+ * aggregates (not per-day facts) and creative URLs expire, so the table is
+ * replaced wholesale — which also drops ads deleted on Meta's side.
+ */
+async function syncMetaAds(c: Campaign, completed: string[]): Promise<void> {
+  if (completed.length === 0) return;
+  const ads = await fetchMetaAds(
+    c.metaCampaignId,
+    completed[0],
+    completed[completed.length - 1],
+  );
+  const fetchedAt = new Date().toISOString();
+  await db.transaction(async (tx) => {
+    await tx.delete(metaAd).where(eq(metaAd.campaignId, c.id));
+    for (const a of ads) {
+      await tx.insert(metaAd).values({
+        campaignId: c.id,
+        adId: a.adId,
+        name: a.name,
+        spend: a.spend,
+        impressions: a.impressions,
+        clicks: a.clicks,
+        installs: a.installs,
+        creativeType: a.creativeType,
+        thumbnailUrl: a.thumbnailUrl,
+        imageUrl: a.imageUrl,
+        videoUrl: a.videoUrl,
+        fetchedAt,
+      });
+    }
+  });
 }
 
 /** GA4 installs: fetch completed install-days missing from ga4_installs. */
@@ -239,9 +274,9 @@ async function attempt(run: () => Promise<void>): Promise<string | null> {
 }
 
 /**
- * Full sync for one campaign: Meta daily + GA4 installs + GA4 cohorts.
- * Each source fails independently; `last_synced_at` is stamped only when
- * all three succeeded, so a stale indicator always means "distrust something".
+ * Full sync for one campaign: Meta daily + Meta ads + GA4 installs + GA4
+ * cohorts. Each source fails independently; `last_synced_at` is stamped only
+ * when all succeeded, so a stale indicator always means "distrust something".
  */
 export async function syncCampaign(campaignId: string): Promise<SyncResult> {
   const c = await getCampaign(campaignId);
@@ -254,12 +289,13 @@ export async function syncCampaign(campaignId: string): Promise<SyncResult> {
 
   const errors: SyncErrors = {
     meta: await attempt(() => syncMeta(c, completed)),
+    metaAds: await attempt(() => syncMetaAds(c, completed)),
     ga4Installs: await attempt(() => syncGa4Installs(c, scope, completed)),
     ga4Cohorts: await attempt(() => syncGa4Cohorts(c, scope, completed)),
   };
 
   let lastSyncedAt = c.lastSyncedAt;
-  if (!errors.meta && !errors.ga4Installs && !errors.ga4Cohorts) {
+  if (!errors.meta && !errors.metaAds && !errors.ga4Installs && !errors.ga4Cohorts) {
     lastSyncedAt = new Date().toISOString();
     await db
       .update(campaign)

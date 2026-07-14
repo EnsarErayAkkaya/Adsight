@@ -70,6 +70,36 @@ export const metaDaily = sqliteTable(
   (t) => [primaryKey({ columns: [t.campaignId, t.date] })],
 );
 
+/**
+ * Per-ad lifetime totals + creative preview for the campaign's Ads section.
+ * Replaced wholesale on each successful ads sync (stats are aggregates, not
+ * daily facts). Creative URLs are signed Meta CDN links that expire after a
+ * few days — `fetchedAt` says how fresh they are; a sync refreshes them.
+ */
+export const metaAd = sqliteTable(
+  "meta_ad",
+  {
+    campaignId: text("campaign_id")
+      .notNull()
+      .references(() => campaign.id, { onDelete: "cascade" }),
+    adId: text("ad_id").notNull(),
+    name: text("name").notNull(),
+    spend: real("spend"),
+    impressions: integer("impressions"),
+    clicks: integer("clicks"),
+    /** Meta-attributed installs (`mobile_app_install` action). */
+    installs: integer("installs"),
+    creativeType: text("creative_type", {
+      enum: ["image", "video", "unknown"],
+    }).notNull(),
+    thumbnailUrl: text("thumbnail_url"),
+    imageUrl: text("image_url"),
+    videoUrl: text("video_url"),
+    fetchedAt: text("fetched_at").notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.campaignId, t.adId] })],
+);
+
 /** GA4 installs (first_open), one row per campaign per install-day. */
 export const ga4Installs = sqliteTable(
   "ga4_installs",
@@ -132,5 +162,6 @@ export type Game = typeof game.$inferSelect;
 export type Platform = typeof platform.$inferSelect;
 export type Campaign = typeof campaign.$inferSelect;
 export type MetaDaily = typeof metaDaily.$inferSelect;
+export type MetaAd = typeof metaAd.$inferSelect;
 export type Ga4Installs = typeof ga4Installs.$inferSelect;
 export type Ga4Cohort = typeof ga4Cohort.$inferSelect;

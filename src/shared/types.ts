@@ -181,8 +181,36 @@ export interface CampaignListItem {
 /** Per-source sync errors; null = that source synced fine. */
 export interface SyncErrors {
   meta: string | null;
+  metaAds: string | null;
   ga4Installs: string | null;
   ga4Cohorts: string | null;
+}
+
+/**
+ * One ad of a campaign: lifetime totals over the campaign's date range plus
+ * a creative preview. Derived metrics are null when the denominator is 0.
+ */
+export interface AdSummary {
+  adId: string;
+  name: string;
+  spend: number | null;
+  impressions: number | null;
+  clicks: number | null;
+  /** Meta-attributed installs. */
+  installs: number | null;
+  /** spend ÷ installs. */
+  cpi: number | null;
+  /** clicks ÷ impressions. */
+  ctr: number | null;
+  /** installs ÷ impressions × 1000. */
+  ipm: number | null;
+  creativeType: "image" | "video" | "unknown";
+  thumbnailUrl: string | null;
+  imageUrl: string | null;
+  /** Playable mp4 (signed CDN URL, expires); null → show the thumbnail. */
+  videoUrl: string | null;
+  /** ISO datetime the stats + creative URLs were fetched. */
+  fetchedAt: string;
 }
 
 export interface SyncStatus {
@@ -266,6 +294,10 @@ export interface Api {
     delete(id: string): Promise<void>;
     getTable(campaignId: string): Promise<CampaignTable | null>;
     listAll(): Promise<CampaignListItem[]>;
+  };
+  ads: {
+    /** Stored per-ad stats + creatives, spend-descending (synced with the table). */
+    forCampaign(campaignId: string): Promise<AdSummary[]>;
   };
   meta: {
     /** Campaigns of the connected ad account, for the ID picker. */

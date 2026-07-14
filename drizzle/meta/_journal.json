@@ -78,6 +78,13 @@
       "when": 1784036390263,
       "tag": "0010_right_invaders",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1784061223875,
+      "tag": "0011_bent_thunderbolts",
+      "breakpoints": true
     }
   ]
 }

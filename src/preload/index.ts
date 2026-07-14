@@ -33,6 +33,10 @@ const api: Api = {
       ipcRenderer.invoke("campaigns:table", campaignId),
     listAll: () => ipcRenderer.invoke("campaigns:listAll"),
   },
+  ads: {
+    forCampaign: (campaignId: string) =>
+      ipcRenderer.invoke("ads:forCampaign", campaignId),
+  },
   meta: {
     listCampaigns: () => ipcRenderer.invoke("meta:campaigns"),
   },
