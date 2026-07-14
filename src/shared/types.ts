@@ -13,6 +13,10 @@ export interface Game {
   ga4PropertyId: string;
   platforms: PlatformKind[];
   campaignCount: number;
+  /** ISO datetime the game was archived; null = active (shown on main page). */
+  archivedAt: string | null;
+  /** Lifetime aggregates across the game's campaigns, from stored data only. */
+  stats: GameStats;
 }
 
 export interface Campaign {
@@ -37,6 +41,20 @@ export interface GameDetail {
   name: string;
   ga4PropertyId: string;
   platforms: PlatformDetail[];
+}
+
+/**
+ * Lifetime aggregates across every campaign of a game, straight from the
+ * stored daily rows (no API fetch). Null = no data stored yet. Ratios are
+ * volume-weighted totals, not averages of daily values: CPI = Σspend ÷
+ * Σ Meta installs, D1 = Σ D1-active ÷ Σ cohort users.
+ */
+export interface GameStats {
+  totalSpend: number | null;
+  /** GA4 installs (matches the table's Installs column). */
+  totalInstalls: number | null;
+  avgCpi: number | null;
+  avgD1: number | null;
 }
 
 export interface CreateGameInput {
@@ -283,6 +301,8 @@ export interface Api {
     create(input: CreateGameInput): Promise<void>;
     delete(id: string): Promise<void>;
     get(id: string): Promise<GameDetail | null>;
+    /** Archive (hide from the main list) or restore a game. */
+    setArchived(id: string, archived: boolean): Promise<void>;
   };
   platforms: {
     create(input: CreatePlatformInput): Promise<void>;

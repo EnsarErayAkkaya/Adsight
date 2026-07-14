@@ -17,6 +17,8 @@ export const game = sqliteTable("game", {
   id: text("id").primaryKey(),
   name: text("name").notNull(),
   ga4PropertyId: text("ga4_property_id").notNull(),
+  /** ISO datetime the game was archived; null = active (shown on main page). */
+  archivedAt: text("archived_at"),
 });
 
 /** A game's presence on one store platform; at most one row per platform. */

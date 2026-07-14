@@ -17,6 +17,8 @@ const api: Api = {
     create: (input: CreateGameInput) => ipcRenderer.invoke("games:create", input),
     delete: (id: string) => ipcRenderer.invoke("games:delete", id),
     get: (id: string) => ipcRenderer.invoke("games:get", id),
+    setArchived: (id: string, archived: boolean) =>
+      ipcRenderer.invoke("games:setArchived", id, archived),
   },
   platforms: {
     create: (input: CreatePlatformInput) =>

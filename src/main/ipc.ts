@@ -1,8 +1,13 @@
 import { ipcMain } from "electron";
 import { randomUUID } from "crypto";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
-import type { AdSummary, CampaignListItem, Game, GameDetail } from "@shared/types";
+import type {
+  AdSummary,
+  CampaignListItem,
+  Game,
+  GameDetail,
+} from "@shared/types";
 import { db } from "./db";
 import {
   campaign,
@@ -125,14 +130,80 @@ export function registerIpcHandlers(): void {
       with: { platforms: { with: { campaigns: { columns: { id: true } } } } },
       orderBy: (game, { asc }) => [asc(game.name)],
     });
-    return rows.map((g) => ({
-      id: g.id,
-      name: g.name,
-      ga4PropertyId: g.ga4PropertyId,
-      platforms: g.platforms.map((p) => p.platform),
-      campaignCount: g.platforms.reduce((n, p) => n + p.campaigns.length, 0),
-    }));
+
+    // Lifetime aggregates per game from the stored daily rows (no API calls).
+    const metaTotals = await db
+      .select({
+        gameId: platform.gameId,
+        spend: sql<number | null>`sum(${metaDaily.spend})`,
+        installs: sql<number | null>`sum(${metaDaily.installs})`,
+      })
+      .from(metaDaily)
+      .innerJoin(campaign, eq(metaDaily.campaignId, campaign.id))
+      .innerJoin(platform, eq(campaign.platformId, platform.id))
+      .groupBy(platform.gameId);
+
+    const ga4Totals = await db
+      .select({
+        gameId: platform.gameId,
+        installs: sql<number | null>`sum(${ga4Installs.installs})`,
+      })
+      .from(ga4Installs)
+      .innerJoin(campaign, eq(ga4Installs.campaignId, campaign.id))
+      .innerJoin(platform, eq(campaign.platformId, platform.id))
+      .groupBy(platform.gameId);
+
+    const d1Totals = await db
+      .select({
+        gameId: platform.gameId,
+        active: sql<number | null>`sum(${ga4Cohort.activeUsers})`,
+        total: sql<number | null>`sum(${ga4Cohort.totalUsers})`,
+      })
+      .from(ga4Cohort)
+      .innerJoin(campaign, eq(ga4Cohort.campaignId, campaign.id))
+      .innerJoin(platform, eq(campaign.platformId, platform.id))
+      .where(eq(ga4Cohort.nthDay, 1))
+      .groupBy(platform.gameId);
+
+    const metaBy = new Map(metaTotals.map((r) => [r.gameId, r]));
+    const ga4By = new Map(ga4Totals.map((r) => [r.gameId, r]));
+    const d1By = new Map(d1Totals.map((r) => [r.gameId, r]));
+    const ratio = (num: number | null | undefined, den: number | null | undefined) =>
+      num != null && den != null && den > 0 ? num / den : null;
+
+    return rows.map((g): Game => {
+      const meta = metaBy.get(g.id);
+      const d1 = d1By.get(g.id);
+      return {
+        id: g.id,
+        name: g.name,
+        ga4PropertyId: g.ga4PropertyId,
+        platforms: g.platforms.map((p) => p.platform),
+        campaignCount: g.platforms.reduce((n, p) => n + p.campaigns.length, 0),
+        archivedAt: g.archivedAt,
+        stats: {
+          totalSpend: meta?.spend ?? null,
+          totalInstalls: ga4By.get(g.id)?.installs ?? null,
+          avgCpi: ratio(meta?.spend, meta?.installs),
+          avgD1: ratio(d1?.active, d1?.total),
+        },
+      };
+    });
   });
+
+  ipcMain.handle(
+    "games:setArchived",
+    async (_e, id: unknown, archived: unknown) => {
+      await db
+        .update(game)
+        .set({
+          archivedAt: z.boolean().parse(archived)
+            ? new Date().toISOString()
+            : null,
+        })
+        .where(eq(game.id, z.string().parse(id)));
+    },
+  );
 
   ipcMain.handle("games:create", async (_e, input: unknown) => {
     const parsed = gameSchema.parse(input);
